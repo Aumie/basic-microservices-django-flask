@@ -1,0 +1,127 @@
+version:
+  '3.8'
+
+  ###########################  networks  #####################
+networks:
+  backend:
+  ###########################  rabbitmq  #####################
+
+services:
+  rabbit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rabbitmq:3-management
+    restart: always
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      - backend
+    volumes:
+      - .rabbitmq/lib:/var/lib/rabbitmq
+      - .rabbitmq/log:/var/log/rabbitmq
+    healthcheck: # check if rabbit completely runs
+      test: 'curl -f http://localhost:15672'
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 1m #try 5, each time wait 1m sec
+  ###########################  admin  #####################
+  backend-admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    restart: always
+    command: 'python manage.py runserver 0.0.0.0:8000'
+    #python manage.py makemigrations;python manage.py migrate;
+    ports:
+      - 8000:8000
+    volumes:
+      # all files here connect to /app in container
+      - ./admin:/app
+    depends_on:
+      rabbit:
+        condition: service_healthy
+      db-admin:
+        condition: service_started
+      queue-admin:
+        condition: service_started
+    networks:
+      - backend
+  queue-admin:
+    build:
+      # context = avialable where?
+      context: ./admin
+      dockerfile: Dockerfile
+    restart: always
+    # environment:
+    #   - DJANGO_SETTINGS_MODULE=admin.settings
+    command: 'python consumer.py'
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    networks:
+      - backend
+  db-admin:
+    image: mysql:8.0.30
+    restart: always
+    environment:
+      MYSQL_DATABASE: main
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - ./admin/.dbdata:/var/lib/mysql
+    ports:
+      - 33066:3306
+    networks:
+      - backend
+
+  ###########################  main  #####################
+
+  backend-main:
+    build:
+      context: ./main
+      dockerfile: Dockerfile
+    restart: always
+    command: 'python app.py'
+    #flask db init; flask db stamp head; flask db migrate; flask db upgrade; 
+    ports:
+      - 8001:5000
+    volumes:
+      # all files here connect to /app in container
+      - ./main:/app
+    depends_on:
+      rabbit:
+        condition: service_healthy
+      db-main:
+        condition: service_started
+      queue-main:
+        condition: service_started
+    networks:
+      - backend
+  queue-main:
+    build:
+      # context = avialable where?
+      context: ./main
+      dockerfile: Dockerfile
+    restart: always
+    command: 'python consumer.py'
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    networks:
+      - backend
+  db-main:
+    image: mysql:8.0.30
+    restart: always
+    environment:
+      MYSQL_DATABASE: main
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - ./main/.dbdata:/var/lib/mysql
+    ports:
+      - 33067:3306
+    networks:
+      - backend
